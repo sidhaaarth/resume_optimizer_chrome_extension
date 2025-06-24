@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "Vox Summarizer Extension",
+  "version": "1.0",
+  "description": "Sends page content to the Vox Summarizer app.",
+  "permissions": ["activeTab", "scripting"],
+  "action": {
+    "default_title": "Summarize page with Vox"
+  },
+  "background": {
+    "service_worker": "background.js"
+  }
+}
