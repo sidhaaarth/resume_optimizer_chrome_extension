@@ -50,6 +50,7 @@ function VoxSummarizerPlayer() {
   const [isPaused, setIsPaused] = useState(false);
   const [currentWordIndex, setCurrentWordIndex] = useState(-1);
   const [hasStarted, setHasStarted] = useState(false);
+  const [bookmarkletCode, setBookmarkletCode] = useState('Loading bookmarklet code...');
 
   const { toast } = useToast();
   
@@ -62,6 +63,13 @@ function VoxSummarizerPlayer() {
         handleSummarizeAndPlay(pageContent);
     }
   }, [searchParams, hasStarted]);
+
+  useEffect(() => {
+    // This effect runs only on the client, after hydration, to prevent mismatch
+    const appUrl = window.location.origin;
+    const code = `javascript:(function(){const appUrl='${appUrl}';const content=document.body.innerText;if(content){window.open(appUrl+'?pageContent='+encodeURIComponent(content),'_blank');}else{alert('Could not find any text on this page.');}})();`;
+    setBookmarkletCode(code);
+  }, []);
 
   useEffect(() => {
     const handleBeforeUnload = () => {
@@ -183,14 +191,8 @@ function VoxSummarizerPlayer() {
   const pageContent = searchParams.get('pageContent');
   
   if (!pageContent) {
-    let appUrl = '';
-    if (typeof window !== 'undefined') {
-        appUrl = window.location.origin;
-    }
-    const bookmarkletCode = `javascript:(function(){const appUrl='${appUrl}';const content=document.body.innerText;if(content){window.open(appUrl+'?pageContent='+encodeURIComponent(content),'_blank');}else{alert('Could not find any text on this page.');}})();`;
-
     const copyToClipboard = () => {
-        if(navigator.clipboard) {
+        if(navigator.clipboard && bookmarkletCode !== 'Loading bookmarklet code...') {
             navigator.clipboard.writeText(bookmarkletCode);
             toast({
                 title: 'Copied to clipboard!',
