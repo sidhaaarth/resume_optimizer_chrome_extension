@@ -55,10 +55,13 @@ const generateAudioSummaryFlow = ai.defineFlow(
     outputSchema: GenerateAudioSummaryOutputSchema,
   },
   async input => {
+    // Truncate the content to avoid hitting model context limits
+    const truncatedContent = input.pageContent.substring(0, 15000);
+
     // Step 1: Summarize the content
-    const {output: summaryOutput} = await summarizePrompt(input);
-    if (!summaryOutput) {
-      throw new Error('Failed to generate summary.');
+    const {output: summaryOutput} = await summarizePrompt({ pageContent: truncatedContent });
+    if (!summaryOutput || !summaryOutput.summary.trim()) {
+      throw new Error('Failed to generate a valid summary.');
     }
     const summary = summaryOutput.summary;
 
