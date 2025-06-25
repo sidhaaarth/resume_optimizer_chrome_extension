@@ -10,7 +10,7 @@
 import {ai} from '@/ai/genkit';
 import {z} from 'genkit';
 import {googleAI} from '@genkit-ai/googleai';
-import { WavFile } from 'wavefile';
+import wav from 'wav';
 
 const GenerateAudioSummaryInputSchema = z.object({
   pageContent: z
@@ -87,7 +87,7 @@ const generateAudioSummaryFlow = ai.defineFlow(
       media.url.substring(media.url.indexOf(',') + 1),
       'base64'
     );
-    const audioDataUri = await toWav(audioBuffer);
+    const audioDataUri = 'data:audio/wav;base64,' + (await toWav(audioBuffer));
 
     // Step 3: Return both summary and audio
     return {
@@ -103,8 +103,23 @@ async function toWav(
   rate = 24000,
   sampleWidth = 2
 ): Promise<string> {
-  const wav = new WavFile();
-  // The Gemini TTS model returns 16-bit PCM.
-  wav.fromScratch(channels, rate, (sampleWidth * 8).toString(), pcmData);
-  return wav.toDataURI();
+  return new Promise((resolve, reject) => {
+    const writer = new wav.Writer({
+      channels,
+      sampleRate: rate,
+      bitDepth: sampleWidth * 8,
+    });
+
+    const bufs: Buffer[] = [];
+    writer.on('error', reject);
+    writer.on('data', (d: Buffer) => {
+      bufs.push(d);
+    });
+    writer.on('end', () => {
+      resolve(Buffer.concat(bufs).toString('base64'));
+    });
+
+    writer.write(pcmData);
+    writer.end();
+  });
 }
