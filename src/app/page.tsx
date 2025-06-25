@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { summarizePageContent } from '@/ai/flows/summarize-page-content';
+import { generateAudioSummary } from '@/ai/flows/generate-audio-summary';
 import { Button } from '@/components/ui/button';
 import {
   Card,
@@ -15,7 +15,6 @@ import {
 import { Label } from '@/components/ui/label';
 import { Loader2, Pause, Play, RotateCcw, Copy } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
-import { cn } from '@/lib/utils';
 import { Logo } from '@/components/icons';
 import { Separator } from '@/components/ui/separator';
 
@@ -45,46 +44,31 @@ function LoadingState() {
 function VoxSummarizerPlayer() {
   const searchParams = useSearchParams();
   const [summary, setSummary] = useState('');
+  const [audioDataUri, setAudioDataUri] = useState('');
   const [isLoading, setIsLoading] = useState(true);
-  const [isSpeaking, setIsSpeaking] = useState(false);
-  const [isPaused, setIsPaused] = useState(false);
-  const [currentWordIndex, setCurrentWordIndex] = useState(-1);
+  const [isPlaying, setIsPlaying] = useState(false);
   const [hasStarted, setHasStarted] = useState(false);
-  const [bookmarkletCode, setBookmarkletCode] = useState('Loading bookmarklet code...');
+  const [bookmarkletCode, setBookmarkletCode] = useState('');
 
   const { toast } = useToast();
   
-  const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
 
   useEffect(() => {
     const pageContent = searchParams.get('pageContent');
     if (pageContent && !hasStarted) {
-        setHasStarted(true); // Prevents re-triggering on param changes
-        handleSummarizeAndPlay(pageContent);
+        setHasStarted(true); 
+        handleSummarize(pageContent);
     }
   }, [searchParams, hasStarted]);
 
   useEffect(() => {
-    // This effect runs only on the client, after hydration, to prevent mismatch
     const appUrl = window.location.origin;
     const code = `javascript:(function(){const appUrl='${appUrl}';const content=document.body.innerText;if(content){window.open(appUrl+'?pageContent='+encodeURIComponent(content),'_blank');}else{alert('Could not find any text on this page.');}})();`;
     setBookmarkletCode(code);
   }, []);
 
-  useEffect(() => {
-    const handleBeforeUnload = () => {
-      if (window.speechSynthesis.speaking) {
-        window.speechSynthesis.cancel();
-      }
-    };
-    window.addEventListener('beforeunload', handleBeforeUnload);
-    return () => {
-      window.removeEventListener('beforeunload', handleBeforeUnload);
-      handleBeforeUnload();
-    };
-  }, []);
-
-  const handleSummarizeAndPlay = async (content: string) => {
+  const handleSummarize = async (content: string) => {
     if (!content.trim()) {
       setIsLoading(false);
       toast({
@@ -96,21 +80,18 @@ function VoxSummarizerPlayer() {
     }
     setIsLoading(true);
     setSummary('');
-    setCurrentWordIndex(-1);
-    if (window.speechSynthesis.speaking) {
-      window.speechSynthesis.cancel();
-    }
+    setAudioDataUri('');
 
     try {
-      const result = await summarizePageContent({ pageContent: content });
+      const result = await generateAudioSummary({ pageContent: content });
       setSummary(result.summary);
-      handlePlay(result.summary);
+      setAudioDataUri(result.audioDataUri);
     } catch (error) {
       console.error('Summarization failed:', error);
       toast({
         title: 'Summarization Failed',
         description:
-          'An error occurred while summarizing the content. Please try again.',
+          'An error occurred while summarizing and generating audio. Please try again.',
         variant: 'destructive',
       });
     } finally {
@@ -118,81 +99,41 @@ function VoxSummarizerPlayer() {
     }
   };
 
-  const handlePlay = (textToSpeak: string) => {
-    if ('speechSynthesis' in window) {
-      if (window.speechSynthesis.speaking) {
-        window.speechSynthesis.cancel();
-      }
-
-      const utterance = new SpeechSynthesisUtterance(textToSpeak);
-      utteranceRef.current = utterance;
-
-      utterance.onstart = () => {
-        setIsSpeaking(true);
-        setIsPaused(false);
-      };
-
-      utterance.onpause = () => {
-        setIsSpeaking(true);
-        setIsPaused(true);
-      };
-
-      utterance.onresume = () => {
-        setIsSpeaking(true);
-        setIsPaused(false);
-      };
-
-      utterance.onend = () => {
-        setIsSpeaking(false);
-        setIsPaused(false);
-        setCurrentWordIndex(-1);
-        utteranceRef.current = null;
-      };
-
-      utterance.onboundary = (event) => {
-        if (event.name === 'word') {
-          const words = textToSpeak.substring(0, event.charIndex).split(/\s+/);
-          setCurrentWordIndex(words.length - 1);
-        }
-      };
-
-      window.speechSynthesis.speak(utterance);
-    } else {
-        toast({
-            title: 'Browser Not Supported',
-            description: 'Your browser does not support text-to-speech.',
-            variant: 'destructive',
-        });
-    }
-  };
-
   const handlePlayPause = () => {
-    if (isSpeaking) {
-      if (isPaused) {
-        window.speechSynthesis.resume();
-      } else {
-        window.speechSynthesis.pause();
-      }
-    } else if (summary) {
-      handlePlay(summary);
+    const audioElement = audioRef.current;
+    if (!audioElement) return;
+
+    if (isPlaying) {
+      audioElement.pause();
+    } else {
+      audioElement.play().catch(e => {
+        toast({ title: "Could not play audio", description: "Your browser may have blocked autoplay.", variant: "destructive" });
+        console.error("Audio play failed:", e);
+      });
     }
   };
-
+  
   const handleReset = () => {
-    if (window.speechSynthesis.speaking) {
-      window.speechSynthesis.cancel();
+    if (audioRef.current) {
+        audioRef.current.pause();
     }
-    // Go back to the instructions page
     window.location.href = '/';
   };
 
-  const summaryWords = summary ? summary.split(/\s+/) : [];
+  useEffect(() => {
+    const audioElement = audioRef.current;
+    if (audioElement && audioDataUri) {
+        audioElement.src = audioDataUri;
+        handlePlayPause();
+    }
+  }, [audioDataUri]);
+
 
   const pageContent = searchParams.get('pageContent');
   
   if (!pageContent) {
     const copyToClipboard = () => {
-        if(navigator.clipboard && bookmarkletCode !== 'Loading bookmarklet code...') {
+        if(navigator.clipboard && bookmarkletCode) {
             navigator.clipboard.writeText(bookmarkletCode);
             toast({
                 title: 'Copied to clipboard!',
@@ -238,7 +179,7 @@ function VoxSummarizerPlayer() {
                     <pre className="text-xs p-2 bg-background rounded w-full overflow-x-auto">
                         <code id="bookmarklet-code">{bookmarkletCode}</code>
                     </pre>
-                    <Button variant="ghost" size="icon" onClick={copyToClipboard}>
+                    <Button variant="ghost" size="icon" onClick={copyToClipboard} disabled={!bookmarkletCode}>
                         <Copy className="h-4 w-4" />
                         <span className="sr-only">Copy code</span>
                     </Button>
@@ -274,23 +215,7 @@ function VoxSummarizerPlayer() {
                <div>
                  <h3 className="text-lg font-semibold sr-only">Summary</h3>
                  <div className="mt-2 text-base text-foreground/90 rounded-lg p-4 bg-muted/50 max-h-[300px] overflow-y-auto">
-                     {summaryWords.length > 0 ? (
-                         <p>
-                         {summaryWords.map((word, index) => (
-                             <span
-                             key={index}
-                             className={cn(
-                                 'transition-all duration-150',
-                                 index === currentWordIndex
-                                 ? 'text-primary font-bold animate-pulse-word'
-                                 : ''
-                             )}
-                             >
-                             {word}{' '}
-                             </span>
-                         ))}
-                         </p>
-                     ) : null}
+                    <p>{summary}</p>
                  </div>
                </div>
              </div>
@@ -298,11 +223,18 @@ function VoxSummarizerPlayer() {
         </CardContent>
 
         <CardFooter className="flex-col items-center justify-center gap-4 pt-0">
+          <audio
+            ref={audioRef}
+            onPlay={() => setIsPlaying(true)}
+            onPause={() => setIsPlaying(false)}
+            onEnded={() => setIsPlaying(false)}
+            className="hidden"
+          />
           {(summary || isLoading) && (
              <div className="flex w-full items-center justify-center gap-4 rounded-full bg-muted p-2">
                 <Button variant="ghost" size="icon" onClick={handlePlayPause} disabled={!summary || isLoading}>
-                  {isSpeaking && !isPaused ? <Pause className="h-6 w-6" /> : <Play className="h-6 w-6" />}
-                  <span className="sr-only">{isSpeaking && !isPaused ? 'Pause' : 'Play'}</span>
+                  {isPlaying ? <Pause className="h-6 w-6" /> : <Play className="h-6 w-6" />}
+                  <span className="sr-only">{isPlaying ? 'Pause' : 'Play'}</span>
                 </Button>
                 <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive" onClick={handleReset}>
                   <RotateCcw className="h-6 w-6" />
